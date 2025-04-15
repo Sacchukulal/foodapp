@@ -4,50 +4,141 @@ import { createClient } from "@supabase/supabase-js"
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ""
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ""
 
-// Create a Supabase client
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+// Check if Supabase credentials are available
+const hasSupabaseCredentials = supabaseUrl && supabaseAnonKey
 
-// Check if we're in a browser environment
-const isBrowser = typeof window !== "undefined"
+// Create a Supabase client with better error handling
+export const supabase = hasSupabaseCredentials
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+      },
+      global: {
+        fetch: (...args) => {
+          // Add custom fetch logic if needed
+          return fetch(...args)
+        },
+      },
+    })
+  : createMockClient()
 
 // Create a mock client for when Supabase credentials are missing
-const createMockClient = () => {
-  console.warn("Using mock Supabase client. Some features may not work properly.")
+function createMockClient() {
+  console.warn("⚠️ Using mock Supabase client. Database operations will not persist.")
 
   // Return a mock client with the same interface but no-op functions
   return {
-    from: () => ({
-      select: () => ({ data: [], error: null }),
-      insert: () => ({ data: [], error: null }),
-      update: () => ({ data: null, error: null }),
-      delete: () => ({ data: null, error: null }),
-      eq: () => ({ data: [], error: null }),
-      single: () => ({ data: null, error: null }),
-      order: () => ({ data: [], error: null }),
-      limit: () => ({ data: [], error: null }),
-      gt: () => ({ data: [], error: null }),
-      gte: () => ({ data: [], error: null }),
-      lt: () => ({ data: [], error: null }),
-      lte: () => ({ data: [], error: null }),
+    from: (table) => ({
+      select: (columns) => {
+        console.log(`Mock SELECT ${columns || "*"} FROM ${table}`)
+        return {
+          data: [],
+          error: null,
+          limit: () => ({ data: [], error: null }),
+          single: () => ({ data: null, error: null }),
+          eq: () => ({ data: [], error: null }),
+          order: () => ({ data: [], error: null }),
+          count: () => ({ data: [], error: null, count: 0 }),
+        }
+      },
+      insert: (rows) => {
+        console.log(`Mock INSERT INTO ${table}`, rows)
+        return {
+          data: Array.isArray(rows) ? rows.map((row, i) => ({ ...row, id: `mock-${i}` })) : [],
+          error: null,
+          select: () => ({
+            data: Array.isArray(rows) ? rows.map((row, i) => ({ ...row, id: `mock-${i}` })) : [],
+            error: null,
+          }),
+        }
+      },
+      update: (updates) => {
+        console.log(`Mock UPDATE ${table}`, updates)
+        return {
+          data: null,
+          error: null,
+          eq: () => ({ data: null, error: null }),
+        }
+      },
+      delete: () => {
+        console.log(`Mock DELETE FROM ${table}`)
+        return {
+          data: null,
+          error: null,
+          eq: () => ({ data: null, error: null }),
+        }
+      },
+      eq: () => ({
+        data: [],
+        error: null,
+        select: () => ({ data: [], error: null }),
+        delete: () => ({ data: null, error: null }),
+        update: () => ({ data: null, error: null }),
+      }),
+      order: () => ({
+        data: [],
+        error: null,
+        limit: () => ({ data: [], error: null }),
+      }),
+      limit: () => ({
+        data: [],
+        error: null,
+      }),
     }),
     storage: {
-      from: () => ({
-        upload: () => ({ data: { path: "" }, error: null }),
-        download: () => ({ data: new Blob(), error: null }),
-        remove: () => ({ data: null, error: null }),
-        getPublicUrl: () => ({ data: { publicUrl: "" } }),
-        list: () => ({ data: [], error: null }),
+      from: (bucket) => ({
+        upload: (path, file) => {
+          console.log(`Mock UPLOAD to ${bucket}/${path}`)
+          return { data: { path }, error: null }
+        },
+        download: (path) => {
+          console.log(`Mock DOWNLOAD from ${bucket}/${path}`)
+          return { data: new Blob(), error: null }
+        },
+        remove: (paths) => {
+          console.log(`Mock REMOVE from ${bucket}`, paths)
+          return { data: null, error: null }
+        },
+        getPublicUrl: (path) => {
+          return { data: { publicUrl: `/mock-storage/${bucket}/${path}` } }
+        },
+        list: (prefix) => {
+          console.log(`Mock LIST from ${bucket}/${prefix || ""}`)
+          return { data: [], error: null }
+        },
       }),
-      listBuckets: () => ({ data: [], error: null }),
-      createBucket: () => ({ data: null, error: null }),
+      listBuckets: () => {
+        console.log("Mock LIST BUCKETS")
+        return { data: [], error: null }
+      },
+      createBucket: (name) => {
+        console.log(`Mock CREATE BUCKET ${name}`)
+        return { data: null, error: null }
+      },
     },
     auth: {
-      signInWithPassword: () => ({ data: null, error: null }),
-      signOut: () => ({ error: null }),
-      getSession: () => ({ data: { session: null }, error: null }),
-      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } }, error: null }),
+      signInWithPassword: () => {
+        console.log("Mock SIGN IN")
+        return { data: null, error: null }
+      },
+      signOut: () => {
+        console.log("Mock SIGN OUT")
+        return { error: null }
+      },
+      getSession: () => {
+        console.log("Mock GET SESSION")
+        return { data: { session: null }, error: null }
+      },
+      onAuthStateChange: (callback) => {
+        console.log("Mock AUTH STATE CHANGE")
+        return { data: { subscription: { unsubscribe: () => {} } }, error: null }
+      },
     },
-    rpc: () => ({ error: null }),
+    rpc: (fn, params) => {
+      console.log(`Mock RPC ${fn}`, params)
+      return { data: null, error: null }
+    },
   }
 }
 
@@ -62,4 +153,9 @@ export const createServerSupabaseClient = () => {
   }
 
   return createClient(supabaseUrl, supabaseServiceKey)
+}
+
+// Helper function to check if Supabase is properly configured
+export function isSupabaseConfigured() {
+  return hasSupabaseCredentials
 }

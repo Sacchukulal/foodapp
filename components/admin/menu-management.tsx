@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase"
+import { supabase, isSupabaseConfigured } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
-import { Plus, Edit, Trash, Search } from "lucide-react"
+import { Plus, Edit, Trash, Search, AlertTriangle } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { toast } from "@/hooks/use-toast"
+import { SupabaseConnectionTest } from "@/components/supabase-connection-test"
 
 // Define the MenuItem type based on our database schema
 interface MenuItem {
@@ -53,6 +55,8 @@ export function MenuManagement() {
     veg: true,
     available: true,
   })
+  const [error, setError] = useState<string | null>(null)
+  const [showConnectionTest, setShowConnectionTest] = useState(false)
 
   // Categories for filtering
   const categories = [
@@ -72,6 +76,15 @@ export function MenuManagement() {
   const fetchMenuItems = async () => {
     try {
       setLoading(true)
+      setError(null)
+
+      // Check if Supabase is configured
+      if (!isSupabaseConfigured()) {
+        setError("Supabase is not properly configured. Check your environment variables.")
+        setMenuItems([])
+        return
+      }
+
       let query = supabase.from("menu_items").select("*")
 
       // Apply category filter if not "all"
@@ -79,15 +92,17 @@ export function MenuManagement() {
         query = query.eq("category", categoryFilter)
       }
 
-      const { data, error } = await query.order("created_at", { ascending: false })
+      const { data, error: fetchError } = await query.order("created_at", { ascending: false })
 
-      if (error) {
-        throw error
+      if (fetchError) {
+        throw fetchError
       }
 
+      console.log("Fetched menu items:", data)
       setMenuItems(data || [])
     } catch (error) {
       console.error("Error fetching menu items:", error)
+      setError(`Failed to fetch menu items: ${error.message || "Unknown error"}`)
       toast({
         title: "Error",
         description: "Failed to fetch menu items",
@@ -110,25 +125,39 @@ export function MenuManagement() {
         return
       }
 
-      const { data, error } = await supabase.from("menu_items").insert([newItem]).select()
-
-      if (error) {
-        throw error
+      // Check if Supabase is configured
+      if (!isSupabaseConfigured()) {
+        setError("Supabase is not properly configured. Check your environment variables.")
+        return
       }
 
-      setMenuItems([data[0], ...menuItems])
-      setIsAddDialogOpen(false)
-      resetNewItem()
+      console.log("Adding new item:", newItem)
+      const { data, error: insertError } = await supabase.from("menu_items").insert([newItem]).select()
 
-      toast({
-        title: "Success",
-        description: "Menu item added successfully",
-      })
+      if (insertError) {
+        throw insertError
+      }
+
+      console.log("Added item response:", data)
+
+      if (data && data.length > 0) {
+        setMenuItems([data[0], ...menuItems])
+        setIsAddDialogOpen(false)
+        resetNewItem()
+
+        toast({
+          title: "Success",
+          description: "Menu item added successfully",
+        })
+      } else {
+        throw new Error("No data returned from insert operation")
+      }
     } catch (error) {
       console.error("Error adding menu item:", error)
+      setError(`Failed to add menu item: ${error.message || "Unknown error"}`)
       toast({
         title: "Error",
-        description: "Failed to add menu item",
+        description: `Failed to add menu item: ${error.message || "Unknown error"}`,
         variant: "destructive",
       })
     }
@@ -139,7 +168,14 @@ export function MenuManagement() {
     try {
       if (!currentItem || !currentItem.id) return
 
-      const { error } = await supabase
+      // Check if Supabase is configured
+      if (!isSupabaseConfigured()) {
+        setError("Supabase is not properly configured. Check your environment variables.")
+        return
+      }
+
+      console.log("Updating item:", currentItem)
+      const { error: updateError } = await supabase
         .from("menu_items")
         .update({
           name: currentItem.name,
@@ -154,8 +190,8 @@ export function MenuManagement() {
         })
         .eq("id", currentItem.id)
 
-      if (error) {
-        throw error
+      if (updateError) {
+        throw updateError
       }
 
       // Update local state
@@ -170,9 +206,10 @@ export function MenuManagement() {
       })
     } catch (error) {
       console.error("Error updating menu item:", error)
+      setError(`Failed to update menu item: ${error.message || "Unknown error"}`)
       toast({
         title: "Error",
-        description: "Failed to update menu item",
+        description: `Failed to update menu item: ${error.message || "Unknown error"}`,
         variant: "destructive",
       })
     }
@@ -183,10 +220,17 @@ export function MenuManagement() {
     if (!confirm("Are you sure you want to delete this item?")) return
 
     try {
-      const { error } = await supabase.from("menu_items").delete().eq("id", id)
+      // Check if Supabase is configured
+      if (!isSupabaseConfigured()) {
+        setError("Supabase is not properly configured. Check your environment variables.")
+        return
+      }
 
-      if (error) {
-        throw error
+      console.log("Deleting item with ID:", id)
+      const { error: deleteError } = await supabase.from("menu_items").delete().eq("id", id)
+
+      if (deleteError) {
+        throw deleteError
       }
 
       // Update local state
@@ -198,9 +242,10 @@ export function MenuManagement() {
       })
     } catch (error) {
       console.error("Error deleting menu item:", error)
+      setError(`Failed to delete menu item: ${error.message || "Unknown error"}`)
       toast({
         title: "Error",
-        description: "Failed to delete menu item",
+        description: `Failed to delete menu item: ${error.message || "Unknown error"}`,
         variant: "destructive",
       })
     }
@@ -234,10 +279,42 @@ export function MenuManagement() {
           <h1 className="text-2xl font-bold">Menu Management</h1>
           <p className="text-gray-500">Manage your restaurant menu items</p>
         </div>
-        <Button onClick={() => setIsAddDialogOpen(true)}>
-          <Plus className="mr-2 h-4 w-4" /> Add New Item
-        </Button>
+        <div className="flex gap-2">
+          <Button onClick={() => setShowConnectionTest(!showConnectionTest)} variant="outline">
+            {showConnectionTest ? "Hide Connection Test" : "Test Connection"}
+          </Button>
+          <Button onClick={() => setIsAddDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" /> Add New Item
+          </Button>
+        </div>
       </div>
+
+      {showConnectionTest && (
+        <div className="mb-6">
+          <SupabaseConnectionTest />
+        </div>
+      )}
+
+      {error && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      {!isSupabaseConfigured() && (
+        <Alert variant="warning" className="mb-4">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Configuration Warning</AlertTitle>
+          <AlertDescription>
+            Supabase environment variables are missing or incorrect. Data will not be persisted.
+            <br />
+            Make sure you have set <code className="font-mono">NEXT_PUBLIC_SUPABASE_URL</code> and{" "}
+            <code className="font-mono">NEXT_PUBLIC_SUPABASE_ANON_KEY</code> in your environment.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div className="flex flex-col md:flex-row gap-4 md:items-center justify-between">
         <div className="flex gap-2 overflow-x-auto pb-2 md:pb-0">
